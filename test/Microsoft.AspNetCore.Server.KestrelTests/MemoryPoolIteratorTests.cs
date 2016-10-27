@@ -299,7 +299,7 @@ namespace Microsoft.AspNetCore.Server.KestrelTests
         {
             // Arrange
             var block = _pool.Lease();
-            var bytes = BitConverter.GetBytes(0x0102030405060708);
+            var bytes = BitConverter.GetBytes(0x0102030405060708UL);
             Buffer.BlockCopy(bytes, 0, block.Array, block.Start, bytes.Length);
             block.End += bytes.Length;
             var scan = block.GetIterator();
@@ -309,13 +309,14 @@ namespace Microsoft.AspNetCore.Server.KestrelTests
             var result = scan.PeekLong();
 
             // Assert
-            Assert.Equal(0x0102030405060708, result);
+            Assert.Equal(0x0102030405060708UL, result);
             Assert.Equal(originalIndex, scan.Index);
 
             _pool.Return(block);
         }
 
         [Theory]
+        [InlineData(0)]
         [InlineData(1)]
         [InlineData(2)]
         [InlineData(3)]
@@ -326,19 +327,81 @@ namespace Microsoft.AspNetCore.Server.KestrelTests
         public void PeekLongAtBlockBoundary(int blockBytes)
         {
             // Arrange
+            var expectedResult = 0x0102030405060708UL;
+            var nonZeroData = 0xFF00FFFF0000FFFFUL;
             var nextBlockBytes = 8 - blockBytes;
 
             var block = _pool.Lease();
-            block.End += blockBytes;
+            block.Start += 8;
+            block.End = block.Start + blockBytes;
 
             var nextBlock = _pool.Lease();
-            nextBlock.End += nextBlockBytes;
+            nextBlock.Start += 8;
+            nextBlock.End = nextBlock.Start + nextBlockBytes;
 
             block.Next = nextBlock;
 
-            var bytes = BitConverter.GetBytes(0x0102030405060708);
+            var bytes = BitConverter.GetBytes(expectedResult);
             Buffer.BlockCopy(bytes, 0, block.Array, block.Start, blockBytes);
             Buffer.BlockCopy(bytes, blockBytes, nextBlock.Array, nextBlock.Start, nextBlockBytes);
+
+            // Fill in surrounding bytes with non-zero data
+            var nonZeroBytes = BitConverter.GetBytes(nonZeroData);
+            Buffer.BlockCopy(nonZeroBytes, 0, block.Array, block.Start - 8, 8);
+            Buffer.BlockCopy(nonZeroBytes, 0, block.Array, block.End, 8);
+            Buffer.BlockCopy(nonZeroBytes, 0, nextBlock.Array, nextBlock.Start - 8, 8);
+            Buffer.BlockCopy(nonZeroBytes, 0, nextBlock.Array, nextBlock.End, 8);
+
+            var scan = block.GetIterator();
+            var originalIndex = scan.Index;
+
+            // Act
+            var result = scan.PeekLong();
+            
+            // Assert
+            Assert.Equal(expectedResult, result);
+            Assert.Equal(originalIndex, scan.Index);
+
+            _pool.Return(block);
+            _pool.Return(nextBlock);
+        }
+
+        [Theory]
+        [InlineData(0)]
+        [InlineData(1)]
+        [InlineData(2)]
+        [InlineData(3)]
+        [InlineData(4)]
+        [InlineData(5)]
+        [InlineData(6)]
+        [InlineData(7)]
+        public void PeekLongAtBlockBoundarayWithMostSignificatBitsSet(int blockBytes)
+        {
+            // Arrange
+            var expectedResult = 0xFF02030405060708UL;
+            var nonZeroData = 0xFF00FFFF0000FFFFUL;
+            var nextBlockBytes = 8 - blockBytes;
+
+            var block = _pool.Lease();
+            block.Start += 8;
+            block.End = block.Start + blockBytes;
+
+            var nextBlock = _pool.Lease();
+            nextBlock.Start += 8;
+            nextBlock.End = nextBlock.Start + nextBlockBytes;
+
+            block.Next = nextBlock;
+
+            var expectedBytes = BitConverter.GetBytes(expectedResult);
+            Buffer.BlockCopy(expectedBytes, 0, block.Array, block.Start, blockBytes);
+            Buffer.BlockCopy(expectedBytes, blockBytes, nextBlock.Array, nextBlock.Start, nextBlockBytes);
+
+            // Fill in surrounding bytes with non-zero data
+            var nonZeroBytes = BitConverter.GetBytes(nonZeroData);
+            Buffer.BlockCopy(nonZeroBytes, 0, block.Array, block.Start - 8, 8);
+            Buffer.BlockCopy(nonZeroBytes, 0, block.Array, block.End, 8);
+            Buffer.BlockCopy(nonZeroBytes, 0, nextBlock.Array, nextBlock.Start - 8, 8);
+            Buffer.BlockCopy(nonZeroBytes, 0, nextBlock.Array, nextBlock.End, 8);
 
             var scan = block.GetIterator();
             var originalIndex = scan.Index;
@@ -347,7 +410,7 @@ namespace Microsoft.AspNetCore.Server.KestrelTests
             var result = scan.PeekLong();
 
             // Assert
-            Assert.Equal(0x0102030405060708, result);
+            Assert.Equal(expectedResult, result);
             Assert.Equal(originalIndex, scan.Index);
 
             _pool.Return(block);
@@ -355,6 +418,7 @@ namespace Microsoft.AspNetCore.Server.KestrelTests
         }
 
         [Theory]
+        [InlineData(0)]
         [InlineData(1)]
         [InlineData(2)]
         [InlineData(3)]
@@ -432,23 +496,23 @@ namespace Microsoft.AspNetCore.Server.KestrelTests
         }
 
         [Theory]
-        [InlineData("CONNECT / HTTP/1.1", ' ', true, "CONNECT")]
-        [InlineData("DELETE / HTTP/1.1", ' ', true, "DELETE")]
-        [InlineData("GET / HTTP/1.1", ' ', true, "GET")]
-        [InlineData("HEAD / HTTP/1.1", ' ', true, "HEAD")]
-        [InlineData("PATCH / HTTP/1.1", ' ', true, "PATCH")]
-        [InlineData("POST / HTTP/1.1", ' ', true, "POST")]
-        [InlineData("PUT / HTTP/1.1", ' ', true, "PUT")]
-        [InlineData("OPTIONS / HTTP/1.1", ' ', true, "OPTIONS")]
-        [InlineData("TRACE / HTTP/1.1", ' ', true, "TRACE")]
-        [InlineData("GET/ HTTP/1.1", ' ', false, null)]
-        [InlineData("get / HTTP/1.1", ' ', false, null)]
-        [InlineData("GOT / HTTP/1.1", ' ', false, null)]
-        [InlineData("ABC / HTTP/1.1", ' ', false, null)]
-        [InlineData("PO / HTTP/1.1", ' ', false, null)]
-        [InlineData("PO ST / HTTP/1.1", ' ', false, null)]
-        [InlineData("short ", ' ', false, null)]
-        public void GetsKnownMethod(string input, char endChar, bool expectedResult, string expectedKnownString)
+        [InlineData("CONNECT / HTTP/1.1", true, "CONNECT")]
+        [InlineData("DELETE / HTTP/1.1", true, "DELETE")]
+        [InlineData("GET / HTTP/1.1", true, "GET")]
+        [InlineData("HEAD / HTTP/1.1", true, "HEAD")]
+        [InlineData("PATCH / HTTP/1.1", true, "PATCH")]
+        [InlineData("POST / HTTP/1.1", true, "POST")]
+        [InlineData("PUT / HTTP/1.1", true, "PUT")]
+        [InlineData("OPTIONS / HTTP/1.1", true, "OPTIONS")]
+        [InlineData("TRACE / HTTP/1.1", true, "TRACE")]
+        [InlineData("GET/ HTTP/1.1", false, null)]
+        [InlineData("get / HTTP/1.1", false, null)]
+        [InlineData("GOT / HTTP/1.1", false, null)]
+        [InlineData("ABC / HTTP/1.1", false, null)]
+        [InlineData("PO / HTTP/1.1", false, null)]
+        [InlineData("PO ST / HTTP/1.1", false, null)]
+        [InlineData("short ", false, null)]
+        public void GetsKnownMethod(string input, bool expectedResult, string expectedKnownString)
         {
             // Arrange
             var block = _pool.Lease();
@@ -465,17 +529,46 @@ namespace Microsoft.AspNetCore.Server.KestrelTests
             Assert.Equal(expectedResult, result);
             Assert.Equal(expectedKnownString, knownString);
 
+            // Test at boundary
+            var maxSplit = Math.Min(input.Length, 8);
+            var nextBlock = _pool.Lease();
+
+            for (var split = 0; split <= maxSplit; split++)
+            {
+                // Arrange
+                block.Reset();
+                nextBlock.Reset();
+
+                Buffer.BlockCopy(chars, 0, block.Array, block.Start, split);
+                Buffer.BlockCopy(chars, split, nextBlock.Array, nextBlock.Start, chars.Length - split);
+
+                block.End += split;
+                nextBlock.End += chars.Length - split;
+                block.Next = nextBlock;
+
+                var boundaryBegin = block.GetIterator();
+                string boundaryKnownString;
+
+                // Act
+                var boundaryResult = boundaryBegin.GetKnownMethod(out boundaryKnownString);
+
+                // Assert
+                Assert.Equal(expectedResult, boundaryResult);
+                Assert.Equal(expectedKnownString, boundaryKnownString);
+            }
+
             _pool.Return(block);
+            _pool.Return(nextBlock);
         }
 
         [Theory]
-        [InlineData("HTTP/1.0\r", '\r', true, MemoryPoolIteratorExtensions.Http10Version)]
-        [InlineData("HTTP/1.1\r", '\r', true, MemoryPoolIteratorExtensions.Http11Version)]
-        [InlineData("HTTP/3.0\r", '\r', false, null)]
-        [InlineData("http/1.0\r", '\r', false, null)]
-        [InlineData("http/1.1\r", '\r', false, null)]
-        [InlineData("short ", ' ', false, null)]
-        public void GetsKnownVersion(string input, char endChar, bool expectedResult, string expectedKnownString)
+        [InlineData("HTTP/1.0\r", true, MemoryPoolIteratorExtensions.Http10Version)]
+        [InlineData("HTTP/1.1\r", true, MemoryPoolIteratorExtensions.Http11Version)]
+        [InlineData("HTTP/3.0\r", false, null)]
+        [InlineData("http/1.0\r", false, null)]
+        [InlineData("http/1.1\r", false, null)]
+        [InlineData("short ", false, null)]
+        public void GetsKnownVersion(string input, bool expectedResult, string expectedKnownString)
         {
             // Arrange
             var block = _pool.Lease();
@@ -491,7 +584,36 @@ namespace Microsoft.AspNetCore.Server.KestrelTests
             Assert.Equal(expectedResult, result);
             Assert.Equal(expectedKnownString, knownString);
 
+            // Test at boundary
+            var maxSplit = Math.Min(input.Length, 9);
+            var nextBlock = _pool.Lease();
+
+            for (var split = 0; split <= maxSplit; split++)
+            {
+                // Arrange
+                block.Reset();
+                nextBlock.Reset();
+
+                Buffer.BlockCopy(chars, 0, block.Array, block.Start, split);
+                Buffer.BlockCopy(chars, split, nextBlock.Array, nextBlock.Start, chars.Length - split);
+
+                block.End += split;
+                nextBlock.End += chars.Length - split;
+                block.Next = nextBlock;
+
+                var boundaryBegin = block.GetIterator();
+                string boundaryKnownString;
+
+                // Act
+                var boundaryResult = boundaryBegin.GetKnownVersion(out boundaryKnownString);
+
+                // Assert
+                Assert.Equal(expectedResult, boundaryResult);
+                Assert.Equal(expectedKnownString, boundaryKnownString);
+            }
+
             _pool.Return(block);
+            _pool.Return(nextBlock);
         }
 
         [Theory]

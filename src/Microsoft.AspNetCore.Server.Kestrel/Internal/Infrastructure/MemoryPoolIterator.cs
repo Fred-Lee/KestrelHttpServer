@@ -180,38 +180,46 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Internal.Infrastructure
             } while (true);
         }
 
-        public unsafe long PeekLong()
+        // NOTE: Little-endian only!
+        public unsafe ulong? PeekLong()
         {
             if (_block == null)
             {
-                return -1;
+                return null;
             }
 
             var wasLastBlock = _block.Next == null;
 
-            if (_block.End - _index >= sizeof(long))
+            if (_block.End - _index >= sizeof(ulong))
             {
-                return *(long*)(_block.DataFixedPtr + _index);
+                return *(ulong*)(_block.DataFixedPtr + _index);
             }
             else if (wasLastBlock)
             {
-                return -1;
+                return null;
+            }
+            else if (_block.End - _index == 0)
+            {
+                // This case can not fall through to the else block since it would cause a 64-bit right shift
+                // on blockLong which is equivalent to no shift at all instead of shifting in all zeros.
+                return *(ulong*)(_block.Next.DataFixedPtr + _block.Next.Start);
             }
             else
             {
                 var blockBytes = _block.End - _index;
-                var nextBytes = sizeof(long) - blockBytes;
+                var nextBytes = sizeof(ulong) - blockBytes;
 
                 if (_block.Next.End - _block.Next.Start < nextBytes)
                 {
-                    return -1;
+                    return null;
                 }
 
-                var blockLong = *(long*)(_block.DataFixedPtr + _block.End - sizeof(long));
+                var blockLong = *(ulong*)(_block.DataFixedPtr + _block.End - sizeof(ulong));
 
-                var nextLong = *(long*)(_block.Next.DataFixedPtr + _block.Next.Start);
+                var nextLong = *(ulong*)(_block.Next.DataFixedPtr + _block.Next.Start);
 
-                return (blockLong >> (sizeof(long) - blockBytes) * 8) | (nextLong << (sizeof(long) - nextBytes) * 8);
+                // Ensure that the right shift has a ulong operand so a logical shift is performed
+                return (blockLong >> (sizeof(ulong) - blockBytes) * 8) | (nextLong << (sizeof(ulong) - nextBytes) * 8);
             }
         }
 
